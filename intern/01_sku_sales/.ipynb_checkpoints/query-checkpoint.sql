@@ -1,5 +1,7 @@
-SELECT cal_date AS days, 
-       SUM(cnt) AS sku
-FROM transactions_another_one
-GROUP BY cal_date
-ORDER BY cal_date;
+SELECT 
+    toStartOfMonth(toDate(buy_date)) AS month,
+    avg(check_amount) AS avg_check,
+    arrayElement(quantilesExactExclusive(0.5)(check_amount), 1) AS median_check
+FROM default.view_checks
+GROUP BY month
+ORDER BY month;
