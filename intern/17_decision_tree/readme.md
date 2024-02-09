@@ -50,4 +50,4 @@ node.py
 
 6. DecisionTreeRegressor
 DecisionTreeRegressor.py
-Реализовать класс DecisionTreeRegressor
+Полностью реализовать класс DecisionTreeRegressor

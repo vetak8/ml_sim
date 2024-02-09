@@ -113,3 +113,54 @@ class DecisionTreeRegressor:
                     value=int(np.round(np.mean(y))),
                     left=left_node,
                     right=right_node)
+        
+    def as_json(self) -> str:
+        """Convert the decision tree to a JSON-like string."""
+        return self._as_json(self.tree_)
+    
+    def _as_json(self, node: Node) -> str:
+        """Recursively convert the decision tree node to a JSON-like string."""
+        if node.left is None and node.right is None:
+            # Leaf node
+            return f'{{"value": {node.value}, "n_samples": {node.n_samples}, "mse": {node.mse:.2f}}}'
+        else:
+            # Internal node
+            left_json = self._as_json(node.left)
+            right_json = self._as_json(node.right)
+            return f'{{"feature": {node.feature}, "threshold": {node.threshold}, "n_samples": {node.n_samples}, "mse": {node.mse:.2f}, "left": {left_json}, "right": {right_json}}}'
+            
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Predict regression target for X.
+    
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            The input samples.
+    
+        Returns
+        -------
+        y : array of shape (n_samples,)
+            The predicted values.
+        """
+        predictions = np.array([self._predict_one_sample(sample) for sample in X])
+        return predictions
+    
+    
+    def _predict_one_sample(self, features: np.ndarray) -> int:
+        """Predict the target value of a single sample."""
+        return self._traverse_tree(self.tree_, features)
+    
+    
+    def _traverse_tree(self, node: Node, features: np.ndarray) -> int:
+        """Traverse the decision tree to predict the target value."""
+        if node.left is None and node.right is None:
+            # Leaf node, return the value
+            return node.value
+        else:
+            if features[node.feature] <= node.threshold:
+                return self._traverse_tree(node.left, features)
+            else:
+                return self._traverse_tree(node.right, features)
+
+    
