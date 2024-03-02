@@ -10,7 +10,7 @@
 
 - Достоверность (Veracity): значения однозначны и находятся в допустимых пределах.
 
-
+![text](https://github.com/vetak8/ml_sim/blob/main/medium/07_data_quality/pipeline.png)
 Data - данные
 Checklist - список метрик, проверяемых значений и допустимых значений
 
