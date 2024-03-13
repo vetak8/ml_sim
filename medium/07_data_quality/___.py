@@ -1,0 +1,248 @@
+"""Metrics."""
+
+from typing import Any, Dict, Union, List
+from dataclasses import dataclass
+import datetime
+
+import pandas as pd
+import pyspark.sql as ps
+from pyspark.sql.functions import col, isNull, row_number, Window
+
+
+@dataclass
+class Metric:
+    """Base class for Metric"""
+
+    def __call__(self, df: Union[pd.DataFrame, ps.DataFrame]) -> Dict[str, Any]:
+        if isinstance(df, pd.DataFrame):
+            return self._call_pandas(df)
+
+        if isinstance(df, ps.DataFrame):
+            return self._call_pyspark(df)
+
+        msg = (
+            f"Not supported type of arg 'df': {type(df)}. "
+            "Supported types: pandas.DataFrame, "
+            "pyspark.sql.dataframe.DataFrame"
+        )
+        raise NotImplementedError(msg)
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        return {}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        return {}
+
+
+@dataclass
+class CountTotal(Metric):
+    """Total number of rows in DataFrame"""
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        return {"total": len(df)}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        return {"total": df.count()}
+
+
+@dataclass
+class CountZeros(Metric):
+    """Number of zeros in choosen column"""
+
+    column: str
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        k = sum(df[self.column] == 0)
+        return {"total": n, "count": k, "delta": k / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        k = df.filter(col(self.column) == 0).count()
+        return {"total": n, "count": k, "delta": k / n}
+
+@dataclass
+class CountNull(Metric):
+    columns: List[str]
+    aggregation: str = "any"
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        if self.aggregation == 'all':
+            k = sum(df[self.columns].isna().all(axis=1))
+        else:
+            k = sum(df[self.columns].isna().any(axis=1))
+        return {"total": n, "count": k, "delta": k / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        if self.aggregation == 'all':
+            condition = isNull(col(self.columns[0]))
+            for column in self.columns[1:]:
+                condition &= isNull(col(column))
+        else:
+            condition = isNull(col(self.columns[0]))
+            for column in self.columns[1:]:
+                condition |= isNull(col(column))
+
+        count_null = df.filter(condition).count()
+        
+        return {"total": n, "count": count_null, "delta": count_null / n}
+
+    
+
+@dataclass
+class CountDuplicates(Metric):
+    """Number of duplicates in chosen columns"""
+
+    columns: List[str]
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        k = len(df[df.duplicated(subset=self.columns)])
+        return {"total": n, "count": k, "delta": k / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        window_spec = Window.partitionBy(self.columns).orderBy(col(self.columns[0]))
+        duplicates_count = df.select(self.columns).withColumn("row_num", row_number().over(window_spec)).groupBy(*self.columns).agg(count("*").alias("count")).filter(col("count") > 1).count()
+        return {"total": n, "count": duplicates_count, "delta": duplicates_count / n}
+
+
+@dataclass
+class CountValue(Metric):
+    """Number of values in chosen column"""
+
+    column: str
+    value: Union[str, int, float]
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        k = (df[self.column] == self.value).sum()
+        return {"total": n, "count": k, "delta": k / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        k = df.filter(col(self.column) == self.value).count()
+        return {"total": n, "count": k, "delta": k / n}
+
+@dataclass
+class CountBelowValue(Metric):
+    """Number of values below threshold"""
+
+    column: str
+    value: float
+    strict: bool = False
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        if self.strict:
+            count_below = (df[self.column] < self.value).sum()
+        else:
+            count_below = (df[self.column] <= self.value).sum()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        if self.strict:
+            count_below = df.filter(col(self.column) < self.value).count()
+        else:
+            count_below = df.filter(col(self.column) <= self.value).count()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+@dataclass
+class CountBelowColumn(Metric):
+    """Count how often column X is below column Y"""
+
+    column_x: str
+    column_y: str
+    strict: bool = False
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        if self.strict:
+            count_below = (df[self.column_x] < df[self.column_y]).sum()
+        else:
+            count_below = (df[self.column_x] <= df[self.column_y]).sum()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        if self.strict:
+            count_below = df.filter(col(self.column_x) < col(self.column_y)).count()
+        else:
+            count_below = df.filter(col(self.column_x) <= col(self.column_y)).count()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+
+@dataclass
+class CountCB(Metric):
+    """Calculate lower/upper bounds for N%-confidence interval"""
+
+    column: str
+    conf: float = 0.95
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        q_lower = (1 - self.conf) / 2
+        q_upper = 1 - q_lower
+        lcb = df[self.column].quantile(q_lower)
+        ucb = df[self.column].quantile(q_upper)
+        return {"lcb": lcb, "ucb": ucb}
+        
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        quantiles = df.approxQuantile(self.column, [0.5 - self.conf/2, 0.5 + self.conf/2], 0.0)
+        lcb, ucb = quantiles[0], quantiles[1]
+        return {"lcb": lcb, "ucb": ucb}
+
+
+@dataclass
+class CountRatioBelow(Metric):
+    """Count how often X / Y is below Z"""
+
+    column_x: str
+    column_y: str
+    column_z: str
+    strict: bool = False
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        n = len(df)
+        if self.strict:
+            count_below = ((df[self.column_x] / df[self.column_y]) < df[self.column_z]).sum()
+        else:
+            count_below = ((df[self.column_x] / df[self.column_y]) <= df[self.column_z]).sum()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        n = df.count()
+        if self.strict:
+            count_below = df.filter(col(self.column_x) / col(self.column_y) < col(self.column_z)).count()
+        else:
+            count_below = df.filter(col(self.column_x) / col(self.column_y) <= col(self.column_z)).count()
+        return {"total": n, "count": count_below, "delta": count_below / n}
+
+@dataclass
+class CountLag(Metric):
+    """A lag between latest date and today"""
+
+    column: str
+    fmt: str = "%Y-%m-%d"
+
+    def _call_pandas(self, df: pd.DataFrame) -> Dict[str, Any]:
+        today = datetime.datetime.now().strftime(self.fmt)
+        df[self.column] = pd.to_datetime(df[self.column], format=self.fmt)
+        last_day = df[self.column].max().strftime(self.fmt)
+        last_day_datetime = df[self.column].max()
+        lag = (datetime.datetime.strptime(today, self.fmt) - last_day_datetime).days
+        return {"today": today, "last_day": last_day, "lag": lag}
+
+    def _call_pyspark(self, df: ps.DataFrame) -> Dict[str, Any]:
+        today = datetime.datetime.now().strftime(self.fmt)
+        df = df.withColumn(self.column, col(self.column).cast("date"))
+        last_day = df.agg(max(col(self.column))).first()[0].strftime(self.fmt)
+        last_day_datetime = datetime.datetime.strptime(last_day, self.fmt)
+        today_datetime = datetime.datetime.strptime(today, self.fmt)
+        lag = (today_datetime - last_day_datetime).days
+        return {"today": today, "last_day": last_day, "lag": lag}
+
